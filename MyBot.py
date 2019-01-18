@@ -35,25 +35,7 @@ def find_closest_dropoff(position, game_map, player):
     return closest_dropoff
 """
 
-"""
-def assign_targets(game_map, ships, worthy_cells):
 
-    for ship_id in ships:
-
-        # If ship is not currently heading to a cell for collection
-        if ships[ship_id]['target'] == None:
-
-            # Set course target for nearest worthy cell
-            current_position = ships[ship_id]['obj'].position
-            nearest_cell_distance = 1000 # arbitrarily large
-            nearest_cell = None
-            
-            for cell in worthy_cells:
-                distance = game_map.calculate_distance(current_position, cell.position)
-                if distance < nearest_cell_distance:
-                    nearest_cell_distance = distance
-                    nearest_cell = cell
-"""
 def make_tuple(position):
     if type(position) == hlt.positionals.Position:
         return (position.x, position.y)
@@ -65,23 +47,79 @@ def make_position(tup):
         return Position(tup[0], tup[1])
     else:
         return tup
-    
+  
+def check_for_self_collision(position):
+    position = make_position(position)
+    for ship_id in ships:
+        if ships[ship_id]["next_pos"] == position:
+            return True
+
+
 def navigate(ship, target):
+    
+    """
     # Returns a list of tuples
     moves = game_map.get_unsafe_moves(ship.position, make_position(target))
+    #if len(moves) > 0:
+    for j in range(0, len(moves)):
+        cardinals[4 + j] = moves[j]
 
-    for move in moves:
-        # Collision check
-        new_pos = ship.position.directional_offset(move)
+    for i in range(3 + len(moves), 0, -1):
+        card = cardinals[i]
+        target = ship.position.directional_offset(card)
+        """
 
-        #if not game_map[new_pos].is_occupied:
-        conflict = False
-        for ship_id in ships:
-            if ships[ship_id]["next_pos"] == new_pos:
-                conflict = True
-        if not conflict:
-            return move
+    moves = game_map.get_unsafe_moves(ship.position, make_position(target))
+    for m in moves:
+        r = random.randint(0, len(moves) - 1)
+        new_pos = ship.position.directional_offset(moves[r])
+
+        if not game_map[new_pos].is_occupied:
+            if not check_for_self_collision(new_pos):
+                return moves[r]
+                
+        
+    flip = random.randint(0, 2)
+    open = get_open_directions(ship)
+    if flip == 0 and len(open) > 0:
+        r = random.randint(0, len(open) - 1) 
+        return open[r]
+
     return (0, 0)
+
+cardinals = {0: Direction.North, 1: Direction.East, 2: Direction.South, 3: Direction.West}
+
+def get_open_directions(ship):
+    open = []
+    for i in range(0, 4):
+        position = ship.position.directional_offset(cardinals[i])
+        if not check_for_self_collision(position):
+            open.append(cardinals[i])
+    return open
+"""
+def get_direction(source, target):
+    logging.info("THis shouldn't print often")
+    dx = source[0] - target[0]
+    dy = source[1] - target[1]
+
+    if abs(dx) > abs(dy):
+        if dx < 0:
+            return Direction.East
+        else:
+            return Direction.West
+    else:
+        if dy < 0:
+            return Direction.South
+        else:
+            return Direction.North
+
+def get_perpindicular_cardinals(direction):
+    direction = make_tuple(direction)
+    if direction == Direction.North or direction == Direction.South:
+        return Direction.East, Direction.West
+    else:
+        return Direction.North, Direction.South
+"""
 
 """
 scan whole 16x16 sector,
@@ -102,27 +140,37 @@ def scan_for_targets(game_map, thresh):
     return worthy_cells
 
 def get_nearest_worthy_target(game_map, ship_position, worthy_cells):
-    
+    if len(worthy_cells) <= 0:
+        return (0, 0)
     # Set course target for nearest worthy cell
     nearest_cell_distance = 1000 # arbitrarily large
     nearest_cell = None
+    nearest_ind = 0
     
+    i = 0
     for cell in worthy_cells:
         distance = game_map.calculate_distance(make_position(ship_position), cell.position)
         if distance < nearest_cell_distance:
             nearest_cell_distance = distance
             nearest_cell = cell
+            nearest_ind = i
+        i = i + 1
 
-    return make_tuple(nearest_cell.position)
+    return make_tuple(nearest_cell.position), nearest_ind
 
 def set_ship_move(ship, move):
     new_pos = ship.position.directional_offset(move)
     ships[ship.id]['next_pos'] = new_pos
     ships[ship.id]['next_move'] = move
 
+def get_bigger_halite_thresh(thresh_divisor, divisor_increment):
+    thresh_divisor = thresh_divisor + divisor_increment
+    halite_thresh = constants.MAX_HALITE/thresh_divisor 
+    return halite_thresh, thresh_divisor
 
 sector_width = game.game_map.width/len(game.players)
-halite_thresh = constants.MAX_HALITE/6
+thresh_divisor = 11
+halite_thresh = constants.MAX_HALITE/thresh_divisor
 #worthy_cells = 
 # Nested dictionaries of ship attributes
 ships = {} 
@@ -139,24 +187,34 @@ while True:
     game_map = game.game_map
     command_queue = []
 
+    # Decrease threshhold for worthy cells
     worthy_cells = scan_for_targets(game_map, halite_thresh)
+    if len(worthy_cells) < len(me.get_ships()) / 2:
+        halite_thresh, thresh_divisor = get_bigger_halite_thresh(thresh_divisor, 1)
+        worthy_cells = scan_for_targets(game_map, halite_thresh)
+        logging.info("INCREASING THRESH DIV by "+ str(thresh_divisor))
 
     for ship in me.get_ships():
 
         # If ship was just born
         if ship.id not in ships:
+            target, i = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+            if len(worthy_cells) > 1:
+                del worthy_cells[i]
+
             ships[ship.id] = {  
                                 'obj': ship,
                                 'status': COLLECTING,
                                 'next_move': (0, 0),
                                 'next_pos': ship.position,
                                 'alive': True, # Used to detect destroyed ships
-                                'target': get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+                                'target': target
                              } 
         else:
             ships[ship.id]['alive'] = True
             
-            if ship.is_full and ships[ship.id]['status'] == COLLECTING:
+
+            if ship.halite_amount > 985 and ships[ship.id]['status'] == COLLECTING:
                 ships[ship.id]['status'] = RETURNING
                 ships[ship.id]['target'] = make_tuple(me.shipyard.position)
                 logging.info(str(ship.id) + " SWITCHED TO RETURNING")
@@ -178,31 +236,28 @@ while True:
 
         # Collecting - ship should always have a target 
         if ships[ship.id]['status'] == COLLECTING:
-            target = ships[ship.id]['target']
 
             # If ship is not currently heading to a cell for collection
-            if target == None:
-                target = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
-            else:
-                # If at target
-                if make_tuple(ship.position) == target:
+            #if make_tuple(ship.position) == target:
 
-                    # Cell sufficiently depleted, but ship is not full yet
-                    if game_map[ship.position].halite_amount < constants.MAX_HALITE / 10:
-                        target = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
-                else:
-                    target = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+             # If current cell is worth mining, stay
+            if game_map[ship.position].halite_amount > halite_thresh:
+                set_ship_move(ship, (0, 0))
+            else:
+                target, i = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+                if len(worthy_cells) > 1:
+                    del worthy_cells[i]
        
-            # Get next move towards target
-            ships[ship.id]['target'] = target
-            move = navigate(ship, target)
-            set_ship_move(ship, move)   
+                # Get next move towards target
+                ships[ship.id]['target'] = target
+                move = navigate(ship, target)
+                set_ship_move(ship, move)   
 
     # If the game is in the first 200 turns and you have enough halite, spawn a ship.
     # Don't spawn a ship if you currently have a ship at port or a ship is moving
     # into port
     if game.turn_number <= 200 and \
-        me.halite_amount >= constants.SHIP_COST * 3 and not \
+        me.halite_amount >= constants.SHIP_COST and not \
         game_map[me.shipyard].is_occupied:
 
         conflict = False
@@ -228,3 +283,11 @@ while True:
 
     # Send your moves back to the game environment, ending this turn.
     game.end_turn(command_queue)
+
+"""
+TODO
+
+- re-work threshhold criterion. Should approach zero towards the end
+- IF branch for dog-pile algorithm in the final moves
+- avoid colliding with the enemy!
+"""

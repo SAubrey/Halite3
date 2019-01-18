@@ -17,7 +17,8 @@ game = hlt.Game()
 
 RETURNING = 0
 COLLECTING = 1
-
+"""
+# Not currently used
 def find_closest_dropoff(position, game_map, player):
     closest_dropoff = None
     closest_distance = 100
@@ -25,77 +26,109 @@ def find_closest_dropoff(position, game_map, player):
     logging.info(player.get_dropoffs())
     for dropoff in player.get_dropoffs():
     
-        distance = game_map.calculate_distance(position, dropoff.position)  
+        distance = game_map.calculate_distance(make_position(position), dropoff.position)  
         if distance < closest_distance:
             closest_distance = distance
             closest_dropoff = dropoff
     if closest_dropoff is None:
         return me.shipyard
     return closest_dropoff
+"""
+
+"""
+def assign_targets(game_map, ships, worthy_cells):
+
+    for ship_id in ships:
+
+        # If ship is not currently heading to a cell for collection
+        if ships[ship_id]['target'] == None:
+
+            # Set course target for nearest worthy cell
+            current_position = ships[ship_id]['obj'].position
+            nearest_cell_distance = 1000 # arbitrarily large
+            nearest_cell = None
+            
+            for cell in worthy_cells:
+                distance = game_map.calculate_distance(current_position, cell.position)
+                if distance < nearest_cell_distance:
+                    nearest_cell_distance = distance
+                    nearest_cell = cell
+"""
+def make_tuple(position):
+    if type(position) == hlt.positionals.Position:
+        return (position.x, position.y)
+    else:
+        return position
+
+def make_position(tup):
+    if type(tup) == tuple:
+        return Position(tup[0], tup[1])
+    else:
+        return tup
     
 def navigate(ship, target):
-    # Returns a list of Direction.North type directions
-    moves = game_map.get_unsafe_moves(ship.position, target)
-    #logging.info(len(moves))
+    # Returns a list of tuples
+    moves = game_map.get_unsafe_moves(ship.position, make_position(target))
 
     for move in moves:
         # Collision check
         new_pos = ship.position.directional_offset(move)
 
-        if not game_map[new_pos].is_occupied:
-            conflict = False
-            for ship_id in ships:
-                if ships[ship_id]["next_pos"] == new_pos:
-                    conflict = True
-            if not conflict:
-                return move
+        #if not game_map[new_pos].is_occupied:
+        conflict = False
+        for ship_id in ships:
+            if ships[ship_id]["next_pos"] == new_pos:
+                conflict = True
+        if not conflict:
+            return move
     return (0, 0)
 
-player_count = len(game.players)
-sector_width = game.game_map.width/player_count
 """
 scan whole 16x16 sector,
 find all positions above a threshhold of halite,
 send ships to the closest one (add target attribute in ship dicts, each ship has unique target)
 """
+def scan_for_targets(game_map, thresh):
+    maxRow = game_map.height
+    maxCol = game_map.width
+    worthy_cells = []
 
+    for r in range(0, maxRow):
+        for c in range(0, maxCol):
+            cell = game_map[Position(c, r)]
+            if cell.halite_amount >= thresh:
+                #worthy_cells[(c, r)] = cell
+                worthy_cells.append(cell)
+    return worthy_cells
 
-def get_moves(ship, target):
-    pass
+def get_nearest_worthy_target(game_map, ship_position, worthy_cells):
+    
+    # Set course target for nearest worthy cell
+    nearest_cell_distance = 1000 # arbitrarily large
+    nearest_cell = None
+    
+    for cell in worthy_cells:
+        distance = game_map.calculate_distance(make_position(ship_position), cell.position)
+        if distance < nearest_cell_distance:
+            nearest_cell_distance = distance
+            nearest_cell = cell
 
-def tuple(position):
-    return (position.x, position.y)
-"""
-def tuple_to_dir(t):
-    cards = Direction.get_all_cardinals()
-    if t[0] == 1:
-        #return cards[2]
-        return "e"
-    elif t[0] == -1:
-        #return cards[3]
-        return "w"
-    elif t[1] == 1:
-        #return cards[1]
-        return "s"
-    elif t[1] == -1:
-        #return cards[0]
-        return "n"
-    else:
-        return "o" 
-"""
-def set_ship_status(ship, move):
+    return make_tuple(nearest_cell.position)
+
+def set_ship_move(ship, move):
     new_pos = ship.position.directional_offset(move)
     ships[ship.id]['next_pos'] = new_pos
     ships[ship.id]['next_move'] = move
 
-# Dictionary of each ship's data in a dictionary
+
+sector_width = game.game_map.width/len(game.players)
+halite_thresh = constants.MAX_HALITE/6
+#worthy_cells = 
+# Nested dictionaries of ship attributes
 ships = {} 
 
 # As soon as you call "ready" function below, the 2 second per turn timer will start.
 game.ready("MyPythonBot")
-
-# Now that your bot is initialized, save a message to yourself in the log file with some important information.
-#   Here, you log here your id, which you can always fetch from the game object by using my_id.
 logging.info("Successfully created bot! My Player ID is {}.".format(game.my_id))
 
 """ <<<Game Loop>>> """
@@ -106,53 +139,70 @@ while True:
     game_map = game.game_map
     command_queue = []
 
+    worthy_cells = scan_for_targets(game_map, halite_thresh)
+
     for ship in me.get_ships():
-        """
-        For each ship, 
-        if the current square does not contain > 1/10th max halite, move
-        else if ship is full, return to a dropoff
-        otherwise, collect Halite
-        """
+
+        # If ship was just born
         if ship.id not in ships:
-            ships[ship.id] = {  'obj': ship,
+            ships[ship.id] = {  
+                                'obj': ship,
                                 'status': COLLECTING,
                                 'next_move': (0, 0),
                                 'next_pos': ship.position,
-                                'alive': True } # Used to detect destroyed ships
-        ships[ship.id]['alive'] = True
+                                'alive': True, # Used to detect destroyed ships
+                                'target': get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+                             } 
+        else:
+            ships[ship.id]['alive'] = True
+            
+            if ship.is_full and ships[ship.id]['status'] == COLLECTING:
+                ships[ship.id]['status'] = RETURNING
+                ships[ship.id]['target'] = make_tuple(me.shipyard.position)
+                logging.info(str(ship.id) + " SWITCHED TO RETURNING")
 
-        if ship.is_full:
-            ships[ship.id]['status'] = RETURNING
-            logging.info("SWITCH TO RETURNING")
 
+        # Returning to base or a dropoff
         if ships[ship.id]['status'] == RETURNING:
             #dropoff = find_closest_dropoff(ship.position, game_map, me)
-            move = navigate(ship, me.shipyard.position)
-            set_ship_status(ship, move)
 
             # Set a ship that has dropped off to collecting
-            if game_map[ship.position.directional_offset(move)].has_structure:
-                logging.info("SWITCH TO COLLECTING")
+            #if game_map[ship.position.directional_offset(move)].has_structure:
+            if game_map[ship.position].has_structure:
+                logging.info(str(ship.id) + " SWITCHED TO COLLECTING")
                 ships[ship.id]['status'] = COLLECTING
-        elif ships[ship.id]['status'] == COLLECTING:
-            if game_map[ship.position].halite_amount < constants.MAX_HALITE / 10:
-                x = random.randrange(0, 20)
-                target = Position(x, x)
-            
-                move = navigate(ship, target)
-                set_ship_status(ship, move)
+                ships[ship.id]['target'] = None
             else:
-                set_ship_status(ship, (0, 0))
-        else:
-            logging.info(ships[ship.id])
-            set_ship_status(ship, (0, 0))
-            
-        
+                move = navigate(ship, me.shipyard.position)
+                set_ship_move(ship, move)
+
+        # Collecting - ship should always have a target 
+        if ships[ship.id]['status'] == COLLECTING:
+            target = ships[ship.id]['target']
+
+            # If ship is not currently heading to a cell for collection
+            if target == None:
+                target = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+            else:
+                # If at target
+                if make_tuple(ship.position) == target:
+
+                    # Cell sufficiently depleted, but ship is not full yet
+                    if game_map[ship.position].halite_amount < constants.MAX_HALITE / 10:
+                        target = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+                else:
+                    target = get_nearest_worthy_target(game_map, ship.position, worthy_cells)
+       
+            # Get next move towards target
+            ships[ship.id]['target'] = target
+            move = navigate(ship, target)
+            set_ship_move(ship, move)   
+
     # If the game is in the first 200 turns and you have enough halite, spawn a ship.
     # Don't spawn a ship if you currently have a ship at port or a ship is moving
     # into port
     if game.turn_number <= 200 and \
-        me.halite_amount >= constants.SHIP_COST * 4 and not \
+        me.halite_amount >= constants.SHIP_COST * 3 and not \
         game_map[me.shipyard].is_occupied:
 
         conflict = False
@@ -161,7 +211,6 @@ while True:
                 conflict = True
         if not conflict:
             command_queue.append(me.shipyard.spawn())
-
     
     kill_list = []
     for ship_id in ships:
@@ -179,4 +228,3 @@ while True:
 
     # Send your moves back to the game environment, ending this turn.
     game.end_turn(command_queue)
-

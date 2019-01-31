@@ -1,3 +1,8 @@
+Check out the Halite website - https://halite.io/
+
+![haliteresults](https://user-images.githubusercontent.com/22190742/52088346-9ace6980-2579-11e9-99cf-d86a8cf7ace5.PNG)  
+_Final results. Rank is out of 4,014 participants._
+
 # Starter Kit
 
 ## Halite III starter kit components
